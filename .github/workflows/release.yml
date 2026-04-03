@@ -38,20 +38,21 @@ jobs:
         env:
           OPENCODE_VERSION: ${{ inputs.version || github.ref_name }}
 
-      # Flatten binaries from nexus-target/bin/nexus to dist/nexus-target
+      # Flatten binaries: copy out of subdirs, remove dirs, leave flat files
+      # mv into an existing directory moves the file *inside* it, so we use /tmp
       - name: Flatten binary structure
         run: |
           cd packages/opencode/dist
-          echo "Build artifacts before flattening:"
-          ls -R
 
-          for dir in nexus-darwin-arm64 nexus-darwin-x64 nexus-windows-x64; do
-            if [ -f "$dir/bin/nexus" ]; then
-              mv "$dir/bin/nexus" "${dir}" && echo "Flattened $dir"
-            elif [ -f "$dir/bin/nexus.exe" ]; then
-              mv "$dir/bin/nexus.exe" "${dir}.exe" && echo "Flattened $dir to .exe"
-            fi
-          done
+          cp nexus-darwin-arm64/bin/nexus     /tmp/nexus-darwin-arm64
+          cp nexus-darwin-x64/bin/nexus       /tmp/nexus-darwin-x64
+          cp nexus-windows-x64/bin/nexus.exe  /tmp/nexus-windows-x64.exe
+
+          rm -rf nexus-darwin-arm64 nexus-darwin-x64 nexus-windows-x64
+
+          mv /tmp/nexus-darwin-arm64     .
+          mv /tmp/nexus-darwin-x64       .
+          mv /tmp/nexus-windows-x64.exe  .
 
           echo "Final dist contents:"
           ls -lh
