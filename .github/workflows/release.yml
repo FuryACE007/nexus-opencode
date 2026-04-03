@@ -45,23 +45,31 @@ jobs:
       - name: Rename binaries to nexus
         run: |
           cd packages/opencode/dist
-          # Mac
-          [ -f "opencode-darwin-arm64/bin/opencode" ] && mv "opencode-darwin-arm64/bin/opencode" "nexus-darwin-arm64"
-          [ -f "opencode-darwin-x64/bin/opencode" ] && mv "opencode-darwin-x64/bin/opencode" "nexus-darwin-x64"
+          echo "Build artifacts structure:"
+          ls -R
           
-          # Windows
-          # Bun compile might or might not have .exe depending on environment, build.ts uses "opencode"
-          if [ -f "opencode-windows-x64/bin/opencode" ]; then
-            mv "opencode-windows-x64/bin/opencode" "nexus-windows-x64.exe"
-          elif [ -f "opencode-windows-x64/bin/opencode.exe" ]; then
-            mv "opencode-windows-x64/bin/opencode.exe" "nexus-windows-x64.exe"
-          fi
+          # Function to move and rename if exists
+          move_binary() {
+            local src_dir=$1
+            local target_name=$2
+            if [ -f "$src_dir/bin/opencode" ]; then
+              mv "$src_dir/bin/opencode" "$target_name"
+              echo "Moved $src_dir/bin/opencode to $target_name"
+            elif [ -f "$src_dir/bin/opencode.exe" ]; then
+              mv "$src_dir/bin/opencode.exe" "$target_name"
+              echo "Moved $src_dir/bin/opencode.exe to $target_name"
+            else
+              echo "Warning: Binary not found in $src_dir/bin/"
+            fi
+          }
+
+          move_binary "opencode-darwin-arm64" "nexus-darwin-arm64"
+          move_binary "opencode-darwin-x64" "nexus-darwin-x64"
+          move_binary "opencode-windows-x64" "nexus-windows-x64.exe"
+          move_binary "opencode-windows-x64-baseline" "nexus-windows-x64-baseline.exe"
           
-          if [ -f "opencode-windows-x64-baseline/bin/opencode" ]; then
-            mv "opencode-windows-x64-baseline/bin/opencode" "nexus-windows-x64-baseline.exe"
-          elif [ -f "opencode-windows-x64-baseline/bin/opencode.exe" ]; then
-            mv "opencode-windows-x64-baseline/bin/opencode.exe" "nexus-windows-x64-baseline.exe"
-          fi
+          echo "Final dist contents:"
+          ls -F
 
       # Determine the release tag from the push event or the manual input
       - name: Determine tag
