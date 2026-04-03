@@ -1,0 +1,391 @@
+openapi: "3.1.0"
+info:
+  title: Nexus Backend API
+  version: "2.0.0"
+  description: |
+    API contract between the Nexus CLI (OpenCode fork) and the Nexus FastAPI backend.
+
+    The backend serves as a middleware that:
+    1. Routes LLM requests through the internal Lumin8 gateway
+    2. Injects product-specific context (SKILLS.md, Confluence, code standards) into every request
+    3. Stores and retrieves developer knowledge via the AgentOverflow system
+
+    Every CLI request carries an `X-Nexus-Skill` header identifying the active product context.
+    No username/password authentication is required — the service runs inside the internal network
+    and relies on a service-account token configured at deployment time (not sent by the CLI).
+
+    **v2.0 (OpenCode CLI)**:
+    The CLI is now OpenCode (TypeScript, tool-based editing) rather than Aider (Python,
+    SEARCH/REPLACE blocks). Key implications for the backend:
+    - No message-ordering constraints. RAG context can be injected wherever appropriate.
+    - No dual-model routing. The backend receives a single model identifier; agent
+      selection is handled entirely client-side by OpenCode.
+    - The `/api/overflow/ingest` payload is simplified: `chat_files`, `ident_mentions`,
+      `file_mentions`, and `recent_messages` fields are removed. The backend's own
+      RAG and Nexus core engine handle retrieval — the CLI sends only git context.
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+paths:
+  /v1/chat/completions:
+    post:
+      summary: OpenAI-compatible chat completions (main LLM endpoint)
+      description: |
+        Standard OpenAI ChatCompletions endpoint with SSE streaming support.
+
+        **Headers**:
+        - `X-Nexus-Skill`: Active product context (e.g., "staking"). Backend uses this
+          to load the corresponding SKILLS.md and inject Confluence/code context.
+
+        **Message Handling**:
+        The `messages` array contains the conversation between the agent and user.
+        The backend should inject product-specific RAG context (SKILLS.md, Confluence
+        chunks, code standards) as a system message early in the array.
+
+        There are no special format constraints on the system prompt — the CLI uses
+        tool-based editing and does not rely on message ordering for edit format rules.
+
+        **Streaming**: Must use standard OpenAI SSE format.
+      parameters:
+        - name: X-Nexus-Skill
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Active product/skill context name (e.g., "staking", "payments")
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - model
+                - messages
+              properties:
+                model:
+                  type: string
+                  example: "nexus-agent"
+                  description: Model identifier from the CLI
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      role:
+                        type: string
+                        enum: [system, user, assistant, tool]
+                      content:
+                        type: string
+                  description: |
+                    Standard OpenAI messages array. The backend should inject RAG
+                    context as an additional system message.
+                tools:
+                  type: array
+                  description: Tool definitions for function calling (OpenCode uses tools for editing)
+                stream:
+                  type: boolean
+                  default: true
+                temperature:
+                  type: number
+                  default: 0
+            example:
+              model: "nexus-agent"
+              stream: true
+              temperature: 0
+              messages:
+                - role: "system"
+                  content: "You are an AI coding assistant..."
+                - role: "user"
+                  content: "Fix the authentication bug in the login handler"
+              tools:
+                - type: "function"
+                  function:
+                    name: "edit"
+                    description: "Edit a file"
+      responses:
+        "200":
+          description: SSE stream of completion chunks
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Here"},"finish_reason":null}]}
+
+                data: {"id":"chatcmpl-abc","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" is"},"finish_reason":null}]}
+
+                data: [DONE]
+
+  /api/skills:
+    get:
+      summary: List all available product skills/contexts
+      description: |
+        Returns all available skills that the CLI can auto-detect or the user can select.
+        Each skill represents a product context (e.g., "staking", "payments") with associated
+        keywords for auto-matching against repository metadata.
+      responses:
+        "200":
+          description: List of available skills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      example: "staking"
+                    description:
+                      type: string
+                      example: "Staking product - validator management and delegation"
+                    keywords:
+                      type: array
+                      items:
+                        type: string
+                      example: ["stake", "validator", "delegation", "epoch"]
+              example:
+                - name: "staking"
+                  description: "Staking product - validator management and delegation"
+                  keywords: ["stake", "validator", "delegation", "epoch"]
+                - name: "payments"
+                  description: "Payments processing and settlement engine"
+                  keywords: ["payment", "settlement", "transaction", "ledger"]
+
+  /api/skills/{name}:
+    get:
+      summary: Get a specific skill's metadata and content
+      description: |
+        Returns a single skill's metadata. Used by the CLI to validate that a skill
+        exists when the user types @skillname to switch context mid-session.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "staking"
+      responses:
+        "200":
+          description: Skill found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  description:
+                    type: string
+                  skill_content:
+                    type: string
+                    description: Full markdown content of the SKILLS.md file
+              example:
+                name: "staking"
+                description: "Staking product - validator management and delegation"
+                skill_content: "# Staking Product Skills\n\n## Architecture\n..."
+        "404":
+          description: Skill not found
+
+  /api/overflow/ingest:
+    post:
+      summary: Submit error/issue for AgentOverflow — always returns an answer immediately
+      description: |
+        Receives a developer query from the CLI's `/solve` command and **always returns an
+        answer immediately**. The backend applies a semantic cache decision automatically:
+
+        - **similarity >= 0.87** -> CACHE HIT: return stored answer, skip LLM
+        - **0.65 <= similarity < 0.87** -> SIMILAR: call LLM, return answer, skip persist
+        - **similarity < 0.65** -> NOVEL: call LLM, auto-persist if confidence >= 0.72
+
+        No human approval or staging is required. The `issue_id` in the response lets the
+        CLI optionally call `/api/overflow/resolve` later to enrich the cached entry
+        with the real committed diff.
+
+        **Context fields**: The CLI sends git context only — git diff, dirty files,
+        recent commits, and the full list of tracked files (`git ls-files`). Richer
+        retrieval context (Confluence, SKILLS.md, code standards) is sourced by the
+        Nexus backend's own RAG pipeline, not forwarded from the client.
+      parameters:
+        - name: X-Nexus-Skill
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Active product context — scopes the similarity search to the same product KB
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - description
+              properties:
+                description:
+                  type: string
+                  description: User's description of the error/issue (primary embedding input)
+                git_diff:
+                  type: string
+                  description: Output of `git diff` for uncommitted changes. May be empty.
+                dirty_files:
+                  type: array
+                  items:
+                    type: string
+                  description: Files modified since last commit
+                recent_commits:
+                  type: array
+                  items:
+                    type: string
+                  description: Last 5 commit messages from `git log --oneline -5`
+                all_files:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Full list of git-tracked files (`git ls-files`). Lets the backend
+                    scope retrieval and relevance ranking to this specific repo.
+            example:
+              description: "Authentication middleware returns 403 after token refresh"
+              git_diff: "diff --git a/auth.py b/auth.py\n..."
+              dirty_files: ["src/auth.py"]
+              recent_commits: ["fix: token refresh", "chore: bump deps"]
+              all_files: ["src/auth.py", "src/middleware.py", "tests/test_auth.py"]
+      responses:
+        "200":
+          description: Answer returned immediately
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - issue_id
+                  - suggestion
+                  - cached
+                  - persisted
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  issue_id:
+                    type: string
+                    format: uuid
+                  suggestion:
+                    type: string
+                    description: The answer shown to the developer
+                  cached:
+                    type: boolean
+                    description: "`true` = served from KB cache (similarity >= 0.87)"
+                  cache_hit_similarity:
+                    type: number
+                    nullable: true
+                  confidence_score:
+                    type: number
+                    nullable: true
+                    description: LLM confidence 0-1. CLI warns if < 0.60.
+                  persisted:
+                    type: boolean
+                    description: "`true` = auto-stored with 6-month TTL (confidence >= 0.72)"
+              example:
+                status: "ok"
+                issue_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                suggestion: "The token expiry check runs before the refresh call on line 47."
+                cached: false
+                confidence_score: 0.82
+                persisted: true
+
+  /api/overflow/resolve:
+    post:
+      summary: Record the confirmed resolution for a previously submitted issue
+      description: |
+        Closes the loop on an issue created by `/api/overflow/ingest`. Called automatically
+        by the CLI when the developer commits while a `/solve` session is active.
+
+        **Two resolution sources (backend must handle both)**:
+
+        | Field | When present | Backend action |
+        |-------|-------------|---------------|
+        | `committed_diff` | Automatic path (commit-triggered) | Feed diff + original issue to LLM -> generate summary -> embed + store |
+        | `resolution` | Manual path (`/solved <note>`) | Use text directly -> embed + store |
+
+        If both are present, prefer `resolution`.
+        If only `committed_diff` is present, the backend MUST summarize it via LLM.
+      parameters:
+        - name: X-Nexus-Skill
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - issue_id
+              properties:
+                issue_id:
+                  type: string
+                  format: uuid
+                committed_diff:
+                  type: string
+                  description: Output of `git show HEAD` captured at commit time. Capped at 8000 chars.
+                resolution:
+                  type: string
+                  description: Explicit developer-written explanation (skip LLM summarization).
+            example:
+              issue_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              committed_diff: "commit abc123\nAuthor: Dev <dev@co.com>\n\n    fix\n\ndiff --git ..."
+      responses:
+        "200":
+          description: Resolution captured
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "resolved"
+                  message:
+                    type: string
+              example:
+                status: "resolved"
+                message: "Fix captured. The knowledge base will surface this for similar future issues."
+        "404":
+          description: issue_id not found
+        "422":
+          description: Neither committed_diff nor resolution provided
+
+  /v1/models:
+    get:
+      summary: Health check and model listing
+      description: |
+        Returns available models. Used by the CLI at startup to verify the backend
+        is reachable before entering the interactive session.
+      responses:
+        "200":
+          description: Backend is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        object:
+                          type: string
+              example:
+                data:
+                  - id: "nexus-agent"
+                    object: "model"

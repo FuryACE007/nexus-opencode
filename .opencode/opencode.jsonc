@@ -47,13 +47,6 @@
     "opencode"
   ],
 
-  // ── Instructions (always loaded into system prompt) ──────────────────────
-  // OpenCode merges these files into every agent's context automatically.
-  "instructions": [
-    "AGENTS.md",
-    "CONTRIBUTING.md"
-  ],
-
   // ── Permissions ─────────────────────────────────────────────────────────
   "permission": {
     "edit": {
