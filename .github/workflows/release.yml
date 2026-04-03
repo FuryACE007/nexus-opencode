@@ -31,45 +31,30 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      # Build self-contained binaries for all platforms.
-      # Output goes to packages/opencode/dist/:
-      #   nexus-darwin-arm64      ← Mac M1/M2/M3
-      #   nexus-darwin-x64        ← Mac Intel
-      #   nexus-windows-x64.exe   ← Windows 64-bit
+      # Build self-contained binaries for Mac (arm64, x64) and Windows (x64).
+      # Output goes to packages/opencode/dist/nexus-{target}/bin/nexus{.exe}
       - name: Build CLI binaries
         run: bun run packages/opencode/script/build.ts
         env:
           OPENCODE_VERSION: ${{ inputs.version || github.ref_name }}
 
-      # Flatten and rename binaries from opencode-target/bin/opencode to nexus-target
-      - name: Rename binaries to nexus
+      # Flatten binaries from nexus-target/bin/nexus to dist/nexus-target
+      - name: Flatten binary structure
         run: |
           cd packages/opencode/dist
-          echo "Build artifacts structure:"
+          echo "Build artifacts before flattening:"
           ls -R
-          
-          # Function to move and rename if exists
-          move_binary() {
-            local src_dir=$1
-            local target_name=$2
-            if [ -f "$src_dir/bin/opencode" ]; then
-              mv "$src_dir/bin/opencode" "$target_name"
-              echo "Moved $src_dir/bin/opencode to $target_name"
-            elif [ -f "$src_dir/bin/opencode.exe" ]; then
-              mv "$src_dir/bin/opencode.exe" "$target_name"
-              echo "Moved $src_dir/bin/opencode.exe to $target_name"
-            else
-              echo "Warning: Binary not found in $src_dir/bin/"
-            fi
-          }
 
-          move_binary "opencode-darwin-arm64" "nexus-darwin-arm64"
-          move_binary "opencode-darwin-x64" "nexus-darwin-x64"
-          move_binary "opencode-windows-x64" "nexus-windows-x64.exe"
-          move_binary "opencode-windows-x64-baseline" "nexus-windows-x64-baseline.exe"
-          
+          for dir in nexus-darwin-arm64 nexus-darwin-x64 nexus-windows-x64; do
+            if [ -f "$dir/bin/nexus" ]; then
+              mv "$dir/bin/nexus" "${dir}" && echo "Flattened $dir"
+            elif [ -f "$dir/bin/nexus.exe" ]; then
+              mv "$dir/bin/nexus.exe" "${dir}.exe" && echo "Flattened $dir to .exe"
+            fi
+          done
+
           echo "Final dist contents:"
-          ls -F
+          ls -lh
 
       # Determine the release tag from the push event or the manual input
       - name: Determine tag
@@ -92,7 +77,6 @@ jobs:
             packages/opencode/dist/nexus-darwin-arm64
             packages/opencode/dist/nexus-darwin-x64
             packages/opencode/dist/nexus-windows-x64.exe
-            packages/opencode/dist/nexus-windows-x64-baseline.exe
           body: |
             ## Install
 
