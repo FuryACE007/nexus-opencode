@@ -18,18 +18,88 @@ Nexus is a terminal-based AI agent built on OpenCode. Unlike generic AI tools:
 
 ## Installation
 
+Nexus is distributed as a **standalone binary** — no Node.js, no npm, no Bun, no runtime
+dependencies of any kind. You just download one file and run it.
+
+### Mac (Apple Silicon — M1/M2/M3)
 ```bash
-# Install via npm (recommended)
-npm install -g @your-org/nexus-cli
-
-# Or via bun
-bun install -g @your-org/nexus-cli
-
-# Verify
+curl -L -o /usr/local/bin/nexus \
+  https://github.com/YOUR-ORG/nexus-opencode/releases/latest/download/nexus-darwin-arm64
+chmod +x /usr/local/bin/nexus
 nexus --version
 ```
 
-> Your backend must be running and reachable. Ask your platform team for the `NEXUS_BASE_URL`
+### Mac (Intel)
+```bash
+curl -L -o /usr/local/bin/nexus \
+  https://github.com/YOUR-ORG/nexus-opencode/releases/latest/download/nexus-darwin-x64
+chmod +x /usr/local/bin/nexus
+nexus --version
+```
+
+### Windows (PowerShell)
+```powershell
+# 1. Create an install folder and download the binary
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\nexus" | Out-Null
+Invoke-WebRequest `
+  -Uri "https://github.com/YOUR-ORG/nexus-opencode/releases/latest/download/nexus-windows-x64.exe" `
+  -OutFile "$env:LOCALAPPDATA\Programs\nexus\nexus.exe"
+
+# 2. Add it to your PATH permanently (run once, then restart your terminal)
+$path = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ($path -notlike "*nexus*") {
+  [Environment]::SetEnvironmentVariable(
+    "PATH", "$path;$env:LOCALAPPDATA\Programs\nexus", "User"
+  )
+}
+
+# 3. Restart your terminal, then verify
+nexus --version
+```
+
+> Replace `YOUR-ORG` with your actual GitHub org. Ask your platform team for the exact URL.
+
+> **No admin rights needed on Mac** — if `/usr/local/bin` is restricted, install to `~/bin`:
+> ```bash
+> mkdir -p ~/bin
+> curl -L -o ~/bin/nexus https://github.com/YOUR-ORG/nexus-opencode/releases/latest/download/nexus-darwin-arm64
+> chmod +x ~/bin/nexus
+> echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+> ```
+
+---
+
+## For Platform Teams: Building the Binary
+
+The binary is produced using **Bun's compile feature**, which embeds the runtime into the
+executable. End users get a single file with zero dependencies — not even Node.js is needed.
+
+**Requirements to build:** A machine (CI or developer workstation) with [Bun](https://bun.sh) installed.
+
+```bash
+# Clone and build
+git clone https://github.com/YOUR-ORG/nexus-opencode
+cd nexus-opencode
+bun install
+
+# Build self-contained binaries for all platforms
+bun run packages/opencode/script/build.ts
+# Output: packages/opencode/dist/
+#   nexus-darwin-arm64   ← Mac M1/M2/M3
+#   nexus-darwin-x64     ← Mac Intel
+#   nexus-windows-x64.exe
+```
+
+**Release workflow:**
+1. Create a GitHub Release tagged with the version (e.g., `v1.3.13`)
+2. Upload all files from `packages/opencode/dist/` as release assets
+3. Users download via the `curl` commands in the Installation section above
+
+> The binary filename on disk determines the command name. If saved as `nexus`, the command is `nexus`.
+
+---
+
+> Your backend must be running and reachable. Ask your platform team for `NEXUS_BASE_URL`
 > if the default (`http://localhost:8000`) doesn't apply to your setup.
 
 **Custom backend URL** (if needed):

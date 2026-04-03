@@ -259,17 +259,9 @@ export const server: Plugin = async (input: PluginInput) => {
     // Validates against /api/skills/{name}, updates the active skill, and
     // strips the tag from the message before it reaches the backend.
     "chat.message": async (_input, output) => {
-      // UserMessage.content is string | ContentPart[]. Extract plain text for @skill matching.
-      const raw = output.message.content
-      const text =
-        typeof raw === "string"
-          ? raw
-          : Array.isArray(raw)
-            ? raw
-                .filter((p): p is { type: "text"; text: string } => p.type === "text")
-                .map((p) => p.text)
-                .join(" ")
-            : null
+      // In OpenCode, the message parts are stored in output.parts, not output.message.content
+      const textParts = output.parts.filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
+      const text = textParts.map((p) => p.text).join(" ")
       if (!text) return
 
       const skillMatch = text.match(/@(\w+)/)
@@ -280,12 +272,9 @@ export const server: Plugin = async (input: PluginInput) => {
       if (switched) {
         activeSkill = skillName
         process.env._NEXUS_ACTIVE_SKILL = skillName
-        // Only rewrite simple string content — leave array parts intact
-        if (typeof raw === "string") {
-          output.message = {
-            ...output.message,
-            content: raw.replace(/@\w+\s*/, "").trim(),
-          }
+        // Strip the @skill tag from text parts
+        for (const part of textParts) {
+          part.text = part.text.replace(new RegExp(`@${skillName}\\s*`), "").trim()
         }
       }
     },
