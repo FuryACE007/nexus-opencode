@@ -4,9 +4,6 @@ description: Confirm the last /solve issue is fixed and capture resolution in kn
 
 Use the nexus-solved tool to confirm the last issue is resolved.
 
-{% if arguments %}
-The developer provided this note about the fix: {{ arguments }}
-Pass it as the `note` argument.
-{% else %}
-No explicit note was provided. The tool will use the last git commit diff automatically.
-{% endif %}
+If the developer provided a note, pass it as the `note` argument: $ARGUMENTS
+
+If $ARGUMENTS is empty, call nexus-solved with no note — the tool will use the last git commit diff automatically.

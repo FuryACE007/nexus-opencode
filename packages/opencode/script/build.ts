@@ -91,6 +91,7 @@ const createEmbeddedWebUIBundle = async () => {
 
 const embeddedFileMap = skipEmbedWebUi ? null : await createEmbeddedWebUIBundle()
 
+// Nexus builds Mac (arm64, x64) and Windows (x64) only
 const allTargets: {
   os: string
   arch: "arm64" | "x64"
@@ -98,35 +99,6 @@ const allTargets: {
   avx2?: false
 }[] = [
   {
-    os: "linux",
-    arch: "arm64",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    avx2: false,
-  },
-  {
-    os: "linux",
-    arch: "arm64",
-    abi: "musl",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    abi: "musl",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    abi: "musl",
-    avx2: false,
-  },
-  {
     os: "darwin",
     arch: "arm64",
   },
@@ -135,22 +107,8 @@ const allTargets: {
     arch: "x64",
   },
   {
-    os: "darwin",
-    arch: "x64",
-    avx2: false,
-  },
-  {
-    os: "win32",
-    arch: "arm64",
-  },
-  {
     os: "win32",
     arch: "x64",
-  },
-  {
-    os: "win32",
-    arch: "x64",
-    avx2: false,
   },
 ]
 
@@ -184,7 +142,7 @@ if (!skipInstall) {
 }
 for (const item of targets) {
   const name = [
-    pkg.name,
+    "nexus",
     // changing to win32 flags npm for some reason
     item.os === "win32" ? "windows" : item.os,
     item.arch,
@@ -214,8 +172,8 @@ for (const item of targets) {
       autoloadDotenv: false,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
-      target: name.replace(pkg.name, "bun") as any,
-      outfile: `dist/${name}/bin/opencode`,
+      target: name.replace("nexus", "bun") as any,
+      outfile: `dist/${name}/bin/nexus`,
       execArgv: [`--user-agent=opencode/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
     },
@@ -235,7 +193,7 @@ for (const item of targets) {
 
   // Smoke test: only run if binary is for current platform
   if (item.os === process.platform && item.arch === process.arch && !item.abi) {
-    const binaryPath = `dist/${name}/bin/opencode`
+    const binaryPath = `dist/${name}/bin/nexus`
     console.log(`Running smoke test: ${binaryPath} --version`)
     try {
       const versionOutput = await $`${binaryPath} --version`.text()
@@ -246,7 +204,7 @@ for (const item of targets) {
     }
   }
 
-  await $`rm -rf ./dist/${name}/bin/tui`
+  await $`rm -rf ./dist/${name}/bin/tui 2>/dev/null || true`
   await Bun.file(`dist/${name}/package.json`).write(
     JSON.stringify(
       {
@@ -264,13 +222,9 @@ for (const item of targets) {
 
 if (Script.release) {
   for (const key of Object.keys(binaries)) {
-    if (key.includes("linux")) {
-      await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
-    } else {
-      await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
-    }
+    await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
   }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
+  await $`gh release upload v${Script.version} ./dist/*.zip --clobber --repo ${process.env.GH_REPO}`
 }
 
 export { binaries }

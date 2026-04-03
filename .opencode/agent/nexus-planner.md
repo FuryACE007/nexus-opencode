@@ -4,7 +4,6 @@ mode: primary
 permission:
   bash: deny
   edit: deny
-  write: deny
   read: allow
 ---
 
