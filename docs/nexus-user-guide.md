@@ -23,17 +23,27 @@ dependencies of any kind. You just download one file and run it.
 
 ### Mac (Apple Silicon — M1/M2/M3)
 ```bash
-curl -L -o /usr/local/bin/nexus \
+# Download (use sudo -E to preserve proxy settings if needed)
+sudo -E curl -L -o /usr/local/bin/nexus \
   https://github.com/YOUR-ORG/nexus-opencode/releases/latest/download/nexus-darwin-arm64
-chmod +x /usr/local/bin/nexus
+
+# Make executable and bypass Gatekeeper
+sudo chmod +x /usr/local/bin/nexus
+sudo xattr -d com.apple.quarantine /usr/local/bin/nexus
+
 nexus --version
 ```
 
 ### Mac (Intel)
 ```bash
-curl -L -o /usr/local/bin/nexus \
+# Download (use sudo -E to preserve proxy settings if needed)
+sudo -E curl -L -o /usr/local/bin/nexus \
   https://github.com/YOUR-ORG/nexus-opencode/releases/latest/download/nexus-darwin-x64
-chmod +x /usr/local/bin/nexus
+
+# Make executable and bypass Gatekeeper
+sudo chmod +x /usr/local/bin/nexus
+sudo xattr -d com.apple.quarantine /usr/local/bin/nexus
+
 nexus --version
 ```
 
