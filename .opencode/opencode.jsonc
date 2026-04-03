@@ -1,18 +1,86 @@
 {
   "$schema": "https://opencode.ai/config.json",
+
+  // ── Nexus Backend Provider ──────────────────────────────────────────────
+  // Routes all LLM traffic through the Nexus FastAPI backend.
+  // Backend handles: service account auth, RAG context injection, Lumin8 routing.
+  // No API keys needed on the client; use NEXUS_BASE_URL env to override the URL.
   "provider": {
-    "opencode": {
-      "options": {},
-    },
+    "nexus": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://localhost:8000/v1",
+        "apiKey": "nexus-passthrough",
+        // Generous timeouts for long agentic sessions routed through Lumin8
+        "timeout": 600000,
+        "chunkTimeout": 60000
+      },
+      "models": {
+        "nexus-agent": {
+          "displayName": "Nexus Agent",
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          }
+        }
+      }
+    }
   },
+
+  // ── Default model ───────────────────────────────────────────────────────
+  "model": "nexus/nexus-agent",
+
+  // ── Disable ambient providers ────────────────────────────────────────────
+  // Prevent env-based API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) from
+  // bypassing Nexus routing. All traffic must go through the backend.
+  "disabled_providers": [
+    "openai",
+    "anthropic",
+    "gemini",
+    "google",
+    "mistral",
+    "groq",
+    "cohere",
+    "perplexity",
+    "deepseek",
+    "xai",
+    "opencode"
+  ],
+
+  // ── Instructions (always loaded into system prompt) ──────────────────────
+  // OpenCode merges these files into every agent's context automatically.
+  "instructions": [
+    "AGENTS.md",
+    "CONTRIBUTING.md"
+  ],
+
+  // ── Permissions ─────────────────────────────────────────────────────────
   "permission": {
     "edit": {
-      "packages/opencode/migration/*": "deny",
-    },
+      "packages/opencode/migration/*": "deny"
+    }
   },
-  "mcp": {},
-  "tools": {
-    "github-triage": false,
-    "github-pr-search": false,
+
+  // ── Compaction ──────────────────────────────────────────────────────────
+  // Tuned for the 128k Nexus context window. Reserve 12k tokens so the
+  // compaction summary + new turn always fits without overflow.
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 12000
   },
+
+  // ── File watcher ────────────────────────────────────────────────────────
+  // Reduce noise from generated and compiled output in the monorepo.
+  "watcher": {
+    "ignore": [
+      "node_modules/**",
+      "dist/**",
+      ".git/**",
+      "packages/*/dist/**",
+      "packages/sdk/js/dist/**",
+      "bun.lock",
+      "**/*.js.map"
+    ]
+  }
 }
