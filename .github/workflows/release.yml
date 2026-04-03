@@ -41,16 +41,27 @@ jobs:
         env:
           OPENCODE_VERSION: ${{ inputs.version || github.ref_name }}
 
-      # Rename outputs from opencode-* to nexus-* so users download "nexus"
+      # Flatten and rename binaries from opencode-target/bin/opencode to nexus-target
       - name: Rename binaries to nexus
         run: |
           cd packages/opencode/dist
-          for f in opencode-darwin-arm64 opencode-darwin-x64; do
-            [ -f "$f" ] && mv "$f" "${f/opencode/nexus}"
-          done
-          for f in opencode-windows-x64.exe opencode-windows-x64-baseline.exe; do
-            [ -f "$f" ] && mv "$f" "${f/opencode/nexus}"
-          done
+          # Mac
+          [ -f "opencode-darwin-arm64/bin/opencode" ] && mv "opencode-darwin-arm64/bin/opencode" "nexus-darwin-arm64"
+          [ -f "opencode-darwin-x64/bin/opencode" ] && mv "opencode-darwin-x64/bin/opencode" "nexus-darwin-x64"
+          
+          # Windows
+          # Bun compile might or might not have .exe depending on environment, build.ts uses "opencode"
+          if [ -f "opencode-windows-x64/bin/opencode" ]; then
+            mv "opencode-windows-x64/bin/opencode" "nexus-windows-x64.exe"
+          elif [ -f "opencode-windows-x64/bin/opencode.exe" ]; then
+            mv "opencode-windows-x64/bin/opencode.exe" "nexus-windows-x64.exe"
+          fi
+          
+          if [ -f "opencode-windows-x64-baseline/bin/opencode" ]; then
+            mv "opencode-windows-x64-baseline/bin/opencode" "nexus-windows-x64-baseline.exe"
+          elif [ -f "opencode-windows-x64-baseline/bin/opencode.exe" ]; then
+            mv "opencode-windows-x64-baseline/bin/opencode.exe" "nexus-windows-x64-baseline.exe"
+          fi
 
       # Determine the release tag from the push event or the manual input
       - name: Determine tag
@@ -95,9 +106,12 @@ jobs:
 
             ### Windows (PowerShell)
             ```powershell
+            $dir = "$env:LOCALAPPDATA\Programs\nexus"
+            if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir }
             Invoke-WebRequest `
               -Uri "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nexus-windows-x64.exe" `
-              -OutFile "$env:LOCALAPPDATA\nexus.exe"
-            # Add $env:LOCALAPPDATA to PATH, then:
+              -OutFile "$dir\nexus.exe"
+            [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$dir", "User")
+            # Restart terminal, then:
             nexus --version
             ```
