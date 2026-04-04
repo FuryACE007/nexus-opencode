@@ -117,8 +117,10 @@ jobs:
             Expand-Archive -Path $zip -DestinationPath "$env:TEMP\nexus-setup" -Force
 
             # 2. Run the setup script (installs config + binary + PATH)
-            Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-            & "$env:TEMP\nexus-setup\setup.ps1"
+            powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\nexus-setup\setup.ps1"
+
+            # rare scenario( step 2 )
+            Get-Content "$env:TEMP\nexus-setup\setup.ps1" | powershell.exe -noprofile -
 
             # 3. Open a new terminal, then:
             nexus --version

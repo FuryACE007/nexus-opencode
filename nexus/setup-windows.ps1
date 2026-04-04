@@ -76,7 +76,8 @@ Write-Ok "Binary installed."
 
 Write-Step "Updating user PATH…"
 
-$cur = [Environment]::GetEnvironmentVariable("Path", "User") ?? ""
+$cur = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($null -eq $cur) { $cur = "" }
 
 if ($cur -split ";" | Where-Object { $_ -eq $bin }) {
     Write-Warn "$bin is already in PATH — skipping."
