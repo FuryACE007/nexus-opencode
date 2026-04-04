@@ -55,7 +55,8 @@ jobs:
           # --- Windows: zip bundle (nexus.exe + .opencode/ + setup.ps1) ---
           # Pre-install runtime dependencies so the bundle is self-contained.
           # Users do not need npm on their machine; no first-run network calls required.
-          cd "$GITHUB_WORKSPACE/.opencode" && npm install --no-fund --no-audit && cd -
+          # Use bun (already set up above) -- npm cannot resolve bun's catalog: protocol.
+          cd "$GITHUB_WORKSPACE/.opencode" && bun install && cd -
 
           mkdir -p nexus-windows-bundle
           cp nexus-windows-x64/bin/nexus.exe nexus-windows-bundle/nexus.exe
