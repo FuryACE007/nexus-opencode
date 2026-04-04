@@ -55,11 +55,14 @@ function loadConfig(): Record<string, any> {
 }
 
 function saveConfig(config: Record<string, any>) {
-  mkdirSync(NEXUS_CONFIG_DIR, { recursive: true })
-  writeFileSync(NEXUS_CONFIG_FILE, JSON.stringify(config, null, 2))
   try {
+    mkdirSync(NEXUS_CONFIG_DIR, { recursive: true })
+    writeFileSync(NEXUS_CONFIG_FILE, JSON.stringify(config, null, 2))
     chmodSync(NEXUS_CONFIG_FILE, 0o600)
-  } catch {}
+  } catch {
+    // Non-fatal: config persistence failure means skill will be re-detected
+    // next session, but the current session continues fine with in-memory state.
+  }
 }
 
 // ── Repo metadata for skill detection ───────────────────────────────────────
@@ -165,7 +168,7 @@ async function detectActiveSkill(directory: string): Promise<SkillDetectionResul
     .sort((a, b) => b.score - a.score)
 
   const best = scored[0]
-  // Confident = clear winner: score ≥ 10 AND at least 2× better than second place
+  // Confident = clear winner: score ≥ 10 AND strictly more than 2× the runner-up
   const confident =
     best.score >= 10 && (scored.length < 2 || best.score > scored[1].score * 2)
 
@@ -331,16 +334,27 @@ export const server: Plugin = async (input: PluginInput) => {
       if (!text) return
 
       // 1. Handle @skill switching (any message)
+      //    \w+ guarantees skillName is alphanumeric+underscore, but we still
+      //    avoid RegExp constructor — use replaceAll with a literal string.
       const skillMatch = text.match(/@(\w+)/)
       if (skillMatch) {
         const skillName = skillMatch[1]
         const switched = await validateAndSwitchSkill(skillName, directory)
         if (switched) {
           pendingSkillSelection = false
+          const tag = `@${skillName}`
           for (const part of textParts) {
-            part.text = part.text.replace(new RegExp(`@${skillName}\\s*`), "").trim()
+            part.text = part.text.replaceAll(tag, "").trim()
           }
           return
+        }
+        // Skill validation failed — inject feedback so user knows
+        if (textParts[0]) {
+          textParts[0].text =
+            `[Nexus: skill "${skillName}" was not found or the backend is unavailable. ` +
+            `Available skills: ${availableSkillNames.join(", ") || "unknown"}. ` +
+            `Inform the user and continue with the current skill "${activeSkill}".]\n\n` +
+            textParts[0].text.replaceAll(tag, "").trim()
         }
       }
 
@@ -354,8 +368,11 @@ export const server: Plugin = async (input: PluginInput) => {
           const switched = await validateAndSwitchSkill(matched, directory)
           if (switched) {
             pendingSkillSelection = false
-            nexusContextInjected = true  // don't inject again; LLM will confirm skill
-            for (const part of textParts) part.text = ""
+            nexusContextInjected = true
+            // Replace message with confirmation so user sees feedback
+            for (const part of textParts) {
+              part.text = `Skill set to: ${matched}`
+            }
             return
           }
         }
