@@ -295,6 +295,13 @@ export const server: Plugin = async (input: PluginInput) => {
 ║                                                                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 `)
+    // Restore terminal before exiting — OpenCode's TUI may have already
+    // enabled alternate screen + raw mode. Without this the shell is left
+    // unresponsive after the process dies.
+    try { (process.stdin as any).setRawMode?.(false) } catch {}
+    process.stdout.write("\x1b[?1049l") // exit alternate screen buffer
+    process.stdout.write("\x1b[?25h")   // show cursor
+    process.stdout.write("\x1b[0m\r\n") // reset colors, move to new line
     process.exit(1)
   }
 
