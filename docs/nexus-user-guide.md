@@ -383,13 +383,24 @@ This file is auto-managed. You normally never need to touch it.
 
 ## Troubleshooting
 
-### "Backend not reachable"
+### Nexus exits immediately with "Backend unreachable"
+
 ```
-[nexus] Backend not reachable at http://localhost:8000
+╔══════════════════════════════════════════════════════════════════╗
+║              NEXUS ERROR: Backend unreachable                    ║
+╚══════════════════════════════════════════════════════════════════╝
 ```
-The Nexus backend isn't running or isn't accessible.
-- Check with your platform team that the backend is deployed
-- Set `NEXUS_BASE_URL` if the backend is at a different address
+
+Nexus **requires** the Nexus Core Engine backend to run. It will not start
+without it — there is no fallback to a generic AI tool.
+
+- **Check your VPN** — the backend is only accessible on the corporate network
+- **Check `NEXUS_BASE_URL`** — if your org runs the backend at a custom URL:
+  ```bash
+  export NEXUS_BASE_URL=https://nexus.yourcompany.com
+  nexus
+  ```
+- **Ask your platform team** if the backend URL or deployment status is unclear
 
 ### "No pending issue found" on /solved
 You typed `/solved` without a prior `/solve`. Run `/solve <description>` first.
@@ -422,3 +433,74 @@ It does **not** have access to:
 - Files outside the current git repo
 - Secrets or credentials in `.env` files (git-ignored files are not tracked)
 - Other teams' codebases unless they're in your dependencies
+
+---
+
+## Testing with the Mock Backend (Contributors / Local Dev)
+
+If you're working on Nexus CLI itself, or the production backend isn't available yet,
+you can test against a lightweight mock backend included in the `nexus-cli` repo.
+
+### Requirements
+- Python 3.9+
+- `pip install fastapi uvicorn` (one-time setup)
+
+### Steps
+
+**1. Start the mock backend**
+```bash
+# From the nexus-cli repo
+cd /path/to/nexus-cli
+python3 mock_backend.py
+# Listening on http://localhost:8000
+```
+
+The mock backend implements all Nexus API endpoints:
+- `POST /v1/chat/completions` — streaming LLM responses
+- `GET  /v1/models` — returns `nexus-agent`
+- `GET  /api/skills` — returns mock skills (staking, payments)
+- `GET  /api/skills/{name}` — skill detail
+- `POST /api/overflow/ingest` — AgentOverflow query + cache simulation
+- `POST /api/overflow/resolve` — resolution capture
+- `GET  /test/last-request` — debug: inspect the last request headers/body
+
+**2. Run Nexus pointing at the mock**
+```bash
+# In a new terminal, from any repo directory
+cd /path/to/some-project
+nexus
+```
+
+The default `NEXUS_BASE_URL` is `http://localhost:8000`, so no extra config is needed.
+
+**3. Verify Nexus-specific features**
+
+Check the `X-Nexus-Skill` header is flowing to the backend:
+```bash
+curl http://localhost:8000/test/last-request | python3 -m json.tool | grep -i nexus
+```
+
+Test AgentOverflow manually:
+```bash
+curl -s -X POST http://localhost:8000/api/overflow/ingest \
+  -H "Content-Type: application/json" \
+  -H "X-Nexus-Skill: staking" \
+  -d '{
+    "description": "NullPointerException in ValidatorRegistry on line 203",
+    "git_diff": "",
+    "dirty_files": [],
+    "recent_commits": [],
+    "all_files": []
+  }' | python3 -m json.tool
+```
+
+**4. Expected behaviour with mock backend**
+
+| Action | Expected |
+|---|---|
+| `nexus` starts | Backend reachable check passes, skill auto-detected |
+| Backend not running | Nexus exits immediately with "Backend unreachable" error |
+| `/solve my bug` | AgentOverflow ingest called, issue ID stored |
+| `git commit` after `/solve` | Auto-resolve fires, issue marked resolved |
+| `/solved` | Manual resolution confirmed to backend |
+| `@payments fix this` | Skill switches to payments, `X-Nexus-Skill: payments` on next request |

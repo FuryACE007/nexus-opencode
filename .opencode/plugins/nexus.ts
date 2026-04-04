@@ -236,16 +236,47 @@ async function sendResolve(
 export const server: Plugin = async (input: PluginInput) => {
   const { directory } = input
 
-  // Detect skill on startup and make it available to tools
+  // Hard-fail if the Nexus backend is unreachable.
+  // Nexus CLI has no purpose without the backend — it is not a generic AI
+  // coding tool. Failing loudly here prevents silent fallback to vanilla
+  // OpenCode, which would be confusing on enterprise laptops where the only
+  // AI model configured is the Nexus provider.
+  try {
+    const resp = await fetch(`${NEXUS_BASE_URL}/v1/models`, {
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  } catch (err) {
+    const hint =
+      process.env.NEXUS_BASE_URL
+        ? `NEXUS_BASE_URL is set to: ${NEXUS_BASE_URL}`
+        : `Default URL: ${NEXUS_BASE_URL} — set NEXUS_BASE_URL to override`
+    console.error(`
+╔══════════════════════════════════════════════════════════════════╗
+║              NEXUS ERROR: Backend unreachable                    ║
+╠══════════════════════════════════════════════════════════════════╣
+║                                                                  ║
+║  Nexus CLI cannot start because it cannot reach the             ║
+║  Nexus Core Engine backend.                                      ║
+║                                                                  ║
+║  ${hint.padEnd(64)}║
+║                                                                  ║
+║  What to do:                                                     ║
+║  1. Confirm the backend is deployed and accessible               ║
+║  2. Check your network / VPN connection                          ║
+║  3. Set NEXUS_BASE_URL to the correct backend address            ║
+║     e.g.  export NEXUS_BASE_URL=https://nexus.yourcompany.com   ║
+║                                                                  ║
+║  For local dev: start the backend first, then run nexus          ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+`)
+    process.exit(1)
+  }
+
+  // Backend is reachable — detect product skill and proceed
   activeSkill = await detectActiveSkill(directory)
   process.env._NEXUS_ACTIVE_SKILL = activeSkill
-
-  // Verify backend is reachable
-  try {
-    await fetch(`${NEXUS_BASE_URL}/v1/models`, { signal: AbortSignal.timeout(5000) })
-  } catch {
-    console.warn(`[nexus] Backend not reachable at ${NEXUS_BASE_URL}. Continuing without Nexus integration.`)
-  }
 
   const hooks: Hooks = {
     // ── Stamp X-Nexus-Skill on every LLM request ──────────────────────────
