@@ -38,21 +38,31 @@ jobs:
         env:
           OPENCODE_VERSION: ${{ inputs.version || github.ref_name }}
 
-      # Flatten binaries: copy out of subdirs, remove dirs, leave flat files
-      # mv into an existing directory moves the file *inside* it, so we use /tmp
+      # Flatten Mac binaries; build Windows zip bundle with .opencode/ + setup script
       - name: Flatten binary structure
         run: |
           cd packages/opencode/dist
 
-          cp nexus-darwin-arm64/bin/nexus     /tmp/nexus-darwin-arm64
-          cp nexus-darwin-x64/bin/nexus       /tmp/nexus-darwin-x64
-          cp nexus-windows-x64/bin/nexus.exe  /tmp/nexus-windows-x64.exe
+          # --- Mac: flat binaries ---
+          cp nexus-darwin-arm64/bin/nexus  /tmp/nexus-darwin-arm64
+          cp nexus-darwin-x64/bin/nexus    /tmp/nexus-darwin-x64
 
-          rm -rf nexus-darwin-arm64 nexus-darwin-x64 nexus-windows-x64
+          rm -rf nexus-darwin-arm64 nexus-darwin-x64
 
-          mv /tmp/nexus-darwin-arm64     .
-          mv /tmp/nexus-darwin-x64       .
-          mv /tmp/nexus-windows-x64.exe  .
+          mv /tmp/nexus-darwin-arm64  .
+          mv /tmp/nexus-darwin-x64    .
+
+          # --- Windows: zip bundle (nexus.exe + .opencode/ + setup.ps1) ---
+          mkdir -p nexus-windows-bundle
+          cp nexus-windows-x64/bin/nexus.exe nexus-windows-bundle/nexus.exe
+          cp -r "$GITHUB_WORKSPACE/.opencode" nexus-windows-bundle/.opencode
+          cp "$GITHUB_WORKSPACE/nexus/setup-windows.ps1" nexus-windows-bundle/setup.ps1
+          rm -rf nexus-windows-x64
+
+          cd nexus-windows-bundle
+          zip -r ../nexus-windows-x64.zip .
+          cd ..
+          rm -rf nexus-windows-bundle
 
           echo "Final dist contents:"
           ls -lh
@@ -77,7 +87,7 @@ jobs:
           files: |
             packages/opencode/dist/nexus-darwin-arm64
             packages/opencode/dist/nexus-darwin-x64
-            packages/opencode/dist/nexus-windows-x64.exe
+            packages/opencode/dist/nexus-windows-x64.zip
           body: |
             ## Install
 
@@ -99,12 +109,17 @@ jobs:
 
             ### Windows (PowerShell)
             ```powershell
-            $dir = "$env:LOCALAPPDATA\Programs\nexus"
-            if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir }
+            # 1. Download and extract the zip
+            $zip = "$env:TEMP\nexus-windows.zip"
             Invoke-WebRequest `
-              -Uri "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nexus-windows-x64.exe" `
-              -OutFile "$dir\nexus.exe"
-            [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$dir", "User")
-            # Restart terminal, then:
+              -Uri "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nexus-windows-x64.zip" `
+              -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath "$env:TEMP\nexus-setup" -Force
+
+            # 2. Run the setup script (installs config + binary + PATH)
+            Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+            & "$env:TEMP\nexus-setup\setup.ps1"
+
+            # 3. Open a new terminal, then:
             nexus --version
             ```
