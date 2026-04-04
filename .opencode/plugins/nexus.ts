@@ -29,7 +29,7 @@ import { homedir } from "os"
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
-const NEXUS_BASE_URL = process.env.NEXUS_BASE_URL ?? "http://localhost:8000"
+const NEXUS_BASE_URL = process.env.NEXUS_BASE_URL ?? "http://127.0.0.1:8000"
 const NEXUS_CONFIG_DIR = join(homedir(), ".nexus")
 const NEXUS_CONFIG_FILE = join(NEXUS_CONFIG_DIR, "config")
 
@@ -346,10 +346,10 @@ export const server: Plugin = async (input: PluginInput) => {
       const skillMatch = text.match(/@(\w+)/)
       if (skillMatch) {
         const skillName = skillMatch[1]
+        const tag = `@${skillName}`
         const switched = await validateAndSwitchSkill(skillName, directory)
         if (switched) {
           pendingSkillSelection = false
-          const tag = `@${skillName}`
           for (const part of textParts) {
             part.text = part.text.replaceAll(tag, "").trim()
           }

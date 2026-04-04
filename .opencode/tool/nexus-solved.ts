@@ -12,7 +12,7 @@
 import { tool } from "@opencode-ai/plugin"
 import { execSync } from "child_process"
 
-const NEXUS_BASE_URL = process.env.NEXUS_BASE_URL ?? "http://localhost:8000"
+const NEXUS_BASE_URL = process.env.NEXUS_BASE_URL ?? "http://127.0.0.1:8000"
 
 function getCommittedDiff(cwd: string): string | null {
   try {
