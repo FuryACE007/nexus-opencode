@@ -9,7 +9,7 @@
  * 1. Hard-fail if the Nexus backend is unreachable — no silent fallback to vanilla OpenCode
  * 2. Detect the active product skill from repo metadata; ask the user if ambiguous
  * 3. Stamp `X-Nexus-Skill` on every LLM request so the backend loads the right context
- * 4. Intercept `@skillname` (and plain skill name when prompted) to switch context mid-session
+ * 4. Handle `/skill <name>` and `/nskills` commands (and plain skill name when prompted) to switch context mid-session
  * 5. Inject a brief Nexus coordination note on the first message so OpenCode's local
  *    orchestration layer knows the active skill and that AgentOverflow (/solve) exists
  * 6. Propagate `_NEXUS_ACTIVE_SKILL` into all spawned shell processes via shell.env hook
@@ -38,7 +38,7 @@ const NEXUS_CONFIG_FILE = join(NEXUS_CONFIG_DIR, "config")
 //   _NEXUS_ACTIVE_SKILL   — current product context, stamped on every LLM request
 //   _NEXUS_LAST_ISSUE_ID  — issue ID from the last /solve, cleared after auto-resolve
 
-let activeSkill = "default"
+let activeSkill = "staking"
 let pendingSkillSelection = false   // true when auto-detection was ambiguous
 let availableSkillNames: string[] = []
 let nexusContextInjected = false    // inject coordination note only on first message
@@ -152,14 +152,14 @@ async function detectActiveSkill(directory: string): Promise<SkillDetectionResul
     const resp = await fetch(`${NEXUS_BASE_URL}/api/skills`, {
       signal: AbortSignal.timeout(10000),
     })
-    if (!resp.ok) return { name: "default", confident: false, availableSkills: [] }
+    if (!resp.ok) return { name: "staking", confident: false, availableSkills: [] }
     skills = await resp.json()
   } catch {
-    return { name: "default", confident: false, availableSkills: [] }
+    return { name: "staking", confident: false, availableSkills: [] }
   }
 
   if (!skills || skills.length === 0) {
-    return { name: "default", confident: true, availableSkills: [] }
+    return { name: "staking", confident: true, availableSkills: [] }
   }
 
   const metadata = getRepoMetadata(directory)
@@ -310,9 +310,11 @@ export const server: Plugin = async (input: PluginInput) => {
   activeSkill = detection.name
   process.env._NEXUS_ACTIVE_SKILL = activeSkill
 
-  if (!detection.confident && detection.availableSkills.length > 0) {
-    pendingSkillSelection = true
+  if (detection.availableSkills.length > 0) {
     availableSkillNames = detection.availableSkills.map((s) => s.name)
+  }
+  if (!detection.confident && availableSkillNames.length > 0) {
+    pendingSkillSelection = true
   }
 
   const hooks: Hooks = {
@@ -332,7 +334,7 @@ export const server: Plugin = async (input: PluginInput) => {
       output.env["NEXUS_BASE_URL"] = NEXUS_BASE_URL
     },
 
-    // ── Handle messages: skill switching, selection prompt, context note ───
+    // ── Handle messages: skill switching, skill listing, selection prompt, context note ───
     "chat.message": async (_input, output) => {
       const textParts = output.parts.filter(
         (p): p is Extract<typeof p, { type: "text" }> => p.type === "text",
@@ -340,35 +342,66 @@ export const server: Plugin = async (input: PluginInput) => {
       const text = textParts.map((p) => p.text).join(" ")
       if (!text) return
 
-      // 1. Handle @skill switching (any message)
-      //    \w+ guarantees skillName is alphanumeric+underscore, but we still
-      //    avoid RegExp constructor — use replaceAll with a literal string.
-      const skillMatch = text.match(/@(\w+)/)
-      if (skillMatch) {
-        const skillName = skillMatch[1]
-        const tag = `@${skillName}`
+      // 1. Handle /skill command — [NEXUS_SKILL_SWITCH:skillname]
+      //    Inserted by .opencode/command/skill.md after $ARGUMENTS substitution.
+      const switchMatch = text.match(/\[NEXUS_SKILL_SWITCH:(\w+)\]/)
+      if (switchMatch) {
+        const skillName = switchMatch[1]
+        const marker = switchMatch[0]
         const switched = await validateAndSwitchSkill(skillName, directory)
         if (switched) {
           pendingSkillSelection = false
           for (const part of textParts) {
-            part.text = part.text.replaceAll(tag, "").trim()
+            part.text = part.text.replace(
+              marker,
+              `[Nexus: Skill successfully switched to "${skillName}". Inform the user the skill is now active.]`,
+            ).trim()
           }
-          return
+        } else {
+          for (const part of textParts) {
+            part.text = part.text.replace(
+              marker,
+              `[Nexus: Skill "${skillName}" was not found or the backend is unavailable. ` +
+              `Available skills: ${availableSkillNames.join(", ") || "unknown"}. ` +
+              `Inform the user and continue with the current skill "${activeSkill}".]`,
+            ).trim()
+          }
         }
-        // Skill validation failed — inject feedback so user knows
-        if (textParts[0]) {
-          textParts[0].text =
-            `[Nexus: skill "${skillName}" was not found or the backend is unavailable. ` +
-            `Available skills: ${availableSkillNames.join(", ") || "unknown"}. ` +
-            `Inform the user and continue with the current skill "${activeSkill}".]\n\n` +
-            textParts[0].text.replaceAll(tag, "").trim()
-        }
+        return
       }
 
-      // 2. If skill selection is pending, also accept a plain skill name as the
+      // 2. Handle /nskills command — [NEXUS_LIST_SKILLS]
+      //    Inserted by .opencode/command/nskills.md.
+      if (text.includes("[NEXUS_LIST_SKILLS]")) {
+        // Re-fetch from backend if the list isn't populated (e.g. skill was cached from prior session)
+        if (availableSkillNames.length === 0) {
+          try {
+            const resp = await fetch(`${NEXUS_BASE_URL}/api/skills`, {
+              signal: AbortSignal.timeout(10000),
+            })
+            if (resp.ok) {
+              const skills: Skill[] = await resp.json()
+              availableSkillNames = skills.map((s) => s.name)
+            }
+          } catch {}
+        }
+        const skillDisplay = availableSkillNames.length > 0
+          ? availableSkillNames.map((s) => s === activeSkill ? `${s} (active)` : s).join(", ")
+          : "No skills available from backend"
+        for (const part of textParts) {
+          part.text = part.text.replace(
+            "[NEXUS_LIST_SKILLS]",
+            `[Nexus: Available skills: ${skillDisplay}. Currently active: "${activeSkill}". ` +
+            `Present this list clearly to the user and mention they can switch with /skill <name>.]`,
+          ).trim()
+        }
+        return
+      }
+
+      // 3. If skill selection is pending, also accept a plain skill name as the
       //    entire message (the LLM will have asked "which skill?" and the user
       //    simply types e.g. "staking" in reply).
-      if (pendingSkillSelection && !skillMatch) {
+      if (pendingSkillSelection) {
         const trimmed = text.trim().toLowerCase()
         const matched = availableSkillNames.find((s) => s.toLowerCase() === trimmed)
         if (matched) {
@@ -376,7 +409,6 @@ export const server: Plugin = async (input: PluginInput) => {
           if (switched) {
             pendingSkillSelection = false
             nexusContextInjected = true
-            // Replace message with confirmation so user sees feedback
             for (const part of textParts) {
               part.text = `Skill set to: ${matched}`
             }
@@ -385,7 +417,7 @@ export const server: Plugin = async (input: PluginInput) => {
         }
       }
 
-      // 3. Inject a Nexus coordination note on the first message of the session.
+      // 4. Inject a Nexus coordination note on the first message of the session.
       //    This keeps OpenCode's local orchestration layer in sync with Nexus:
       //    - tells it which product skill is active
       //    - tells it AgentOverflow is available via /solve for complex bugs
@@ -398,7 +430,7 @@ export const server: Plugin = async (input: PluginInput) => {
           textParts[0].text =
             `[Nexus: product skill could not be auto-detected for this repo. ` +
             `Available skills: ${list}. Before answering, ask the user which skill ` +
-            `to activate. They can reply with just the skill name or type @skillname.]\n\n` +
+            `to activate. They can use /skill <name> to switch, or just reply with the skill name.]\n\n` +
             textParts[0].text
         } else {
           textParts[0].text =
