@@ -1,5 +1,5 @@
 ---
-description: Ultra-compressed caveman mode. ~75% fewer tokens. Levels: lite, full (default), ultra.
+description: "Ultra-compressed caveman mode. ~75% fewer tokens. Levels: lite, full (default), ultra."
 ---
 
 Activate caveman communication mode for this session. Level: $ARGUMENTS (default: full if blank).
