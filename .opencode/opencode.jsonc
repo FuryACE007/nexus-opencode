@@ -73,5 +73,9 @@
       "bun.lock",
       "**/*.js.map"
     ]
-  }
+  },
+
+  // ── System Prompt ───────────────────────────────────────────────────────
+  // Strict working directory restriction for the LLM.
+  "system": "STRICT RULE: You are operating inside a specific project directory. Never change the working directory. Never access, read, write, or request access to any file or folder outside the current project root. All file operations must stay within the project directory you were opened in. This is forbidden — do not ask, do not attempt."
 }
