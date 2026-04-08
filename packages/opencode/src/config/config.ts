@@ -1036,6 +1036,7 @@ export namespace Config {
             .describe("Timeout in milliseconds for model context protocol (MCP) requests"),
         })
         .optional(),
+      system: z.string().optional().describe("System prompt for LLM operations"),
     })
     .strict()
     .meta({
@@ -1177,11 +1178,16 @@ export namespace Config {
             if (!data || typeof data !== "object" || Array.isArray(data)) return data
             const copy = { ...(data as Record<string, unknown>) }
             const hadLegacy = "theme" in copy || "keybinds" in copy || "tui" in copy
-            if (!hadLegacy) return copy
-            delete copy.theme
-            delete copy.keybinds
-            delete copy.tui
-            log.warn("tui keys in opencode config are deprecated; move them to tui.json", { path: source })
+            if (hadLegacy) {
+              delete copy.theme
+              delete copy.keybinds
+              delete copy.tui
+              log.warn("tui keys in opencode config are deprecated; move them to tui.json", { path: source })
+            }
+            if ("System" in copy && !("system" in copy)) {
+              copy.system = copy.System
+              delete copy.System
+            }
             return copy
           })()
 
