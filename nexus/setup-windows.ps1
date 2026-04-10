@@ -42,10 +42,10 @@ $bin        = "$env:LOCALAPPDATA\Programs\nexus"
 Write-Step "Validating bundle..."
 
 if (-not (Test-Path $exe)) {
-    Write-Error "nexus.exe not found in $root — make sure you extracted the full zip."
+    Write-Error "nexus.exe not found in $root - make sure you extracted the full zip."
 }
 if (-not (Test-Path $src -PathType Container)) {
-    Write-Error ".opencode\ directory not found in $root — make sure you extracted the full zip."
+    Write-Error ".opencode\ directory not found in $root - make sure you extracted the full zip."
 }
 
 $requiredFiles = @(
@@ -55,7 +55,7 @@ $requiredFiles = @(
 )
 foreach ($f in $requiredFiles) {
     if (-not (Test-Path $f)) {
-        Write-Error "Bundle is incomplete — missing: $f`nRe-download the zip from the release page."
+        Write-Error "Bundle is incomplete - missing: $f`nRe-download the zip from the release page."
     }
 }
 
@@ -66,7 +66,7 @@ Write-Ok "Bundle is complete."
 Write-Step "Installing Nexus config to $dest ..."
 
 if (Test-Path $dest) {
-    Write-Warn "Existing $dest found — merging (local changes preserved)."
+    Write-Warn "Existing $dest found - merging (local changes preserved)."
     Copy-Item -Path "$src\*" -Destination $dest -Recurse -Force
 } else {
     New-Item -ItemType Directory -Path $dest -Force | Out-Null
@@ -114,7 +114,7 @@ $cur = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($null -eq $cur) { $cur = "" }
 
 if ($cur -split ";" | Where-Object { $_ -eq $bin }) {
-    Write-Warn "$bin already in PATH — skipping."
+    Write-Warn "$bin already in PATH - skipping."
 } else {
     [Environment]::SetEnvironmentVariable("Path", "$cur;$bin", "User")
     Write-Ok "Added $bin to PATH. Open a new terminal to pick it up."
@@ -139,7 +139,7 @@ $cfgFile = Join-Path $dest "opencode.jsonc"
 if (Test-Path $cfgFile) {
     Write-Ok "Runtime config found: $cfgFile"
 } else {
-    Write-Warn "opencode.jsonc not found at $cfgFile — config copy may have failed."
+    Write-Warn "opencode.jsonc not found at $cfgFile - config copy may have failed."
 }
 
 # -- done --
