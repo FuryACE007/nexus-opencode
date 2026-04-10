@@ -1,12 +1,18 @@
 /// <reference path="../env.d.ts" />
 /**
- * AgentOverflow /solved tool
+ * AgentOverflow nexus-solved tool
  *
- * Confirms the last /solve issue is fixed and captures the resolution
- * in the enterprise knowledge base.
+ * Saves an approved resolution to the team knowledge base.
  *
- * With no note: uses the most recent git commit diff (backend summarizes via LLM).
- * With a note: stores the developer's explicit description.
+ * Flow:
+ *   1. LLM helps user resolve an issue (via nexus-solve or independently)
+ *   2. LLM summarizes the complete fix (all steps, root cause, solution)
+ *   3. LLM presents the draft to the user for review + approval
+ *   4. User approves or requests edits
+ *   5. LLM calls this tool with the approved resolution text
+ *
+ * The resolution can be anything — code fix, config change, explanation,
+ * workaround — it does not require a git commit.
  */
 
 import { tool } from "@opencode-ai/plugin"
@@ -24,7 +30,7 @@ function getCommittedDiff(cwd: string): string | null {
     }).trim()
     if (!diff) return null
     return diff.length > 8000
-      ? diff.slice(0, 8000) + "\n\n... (diff truncated for payload size)"
+      ? diff.slice(0, 8000) + "\n\n... (diff truncated)"
       : diff
   } catch {
     return null
@@ -32,43 +38,42 @@ function getCommittedDiff(cwd: string): string | null {
 }
 
 export default tool({
-  description: `Confirm the last /solve issue is fixed and capture the resolution in the knowledge base.
+  description: `Save a resolution to the team knowledge base (AgentOverflow).
 
-Use this tool after the developer has fixed a problem that was previously submitted via
-the nexus-solve tool. If called without a note, it captures the most recent git commit
-diff and the backend generates a resolution summary via LLM. If called with an explicit
-note, it stores the developer's description directly.
+Use ONLY after the user has explicitly approved the resolution text. Never auto-save.
 
-This is optional -- resolutions are also captured automatically when a git commit is
-made after a /solve. Use this only when the developer wants to add a more detailed
-explanation than the commit provides.`,
+Before calling this tool, you must:
+1. Summarize the complete fix: original problem, all steps taken, root cause, and what solved it
+2. Present the summary to the user: "Want to save this to the team KB? You can approve or edit first."
+3. Wait for explicit user approval (or incorporate their edits)
+4. Then call this tool with the approved text
+
+The resolution can be anything — code fix, config change, explanation, workaround. No git commit required.`,
   args: {
-    note: tool.schema
+    resolution: tool.schema
       .string()
+      .describe(
+        "The approved resolution text. Should include: original problem, steps taken to fix it, root cause (if known), and the final solution. This is what gets stored for future developers.",
+      ),
+    include_diff: tool.schema
+      .boolean()
       .optional()
       .describe(
-        "Optional: explicit description of what fixed the issue. If omitted, uses the last git commit diff.",
+        "Optional: if true, also appends the latest git commit diff as supplementary context. Useful when the fix involved a code change that was just committed.",
       ),
   },
   async execute(args, context) {
-    const issueId = process.env._NEXUS_LAST_ISSUE_ID
-    if (!issueId) {
-      return "No pending issue found. Use the nexus-solve tool first to submit an issue."
-    }
-
     const cwd = context.directory
-    const skillHeader = process.env._NEXUS_ACTIVE_SKILL ?? "default"
+    const skill = process.env._NEXUS_ACTIVE_SKILL ?? "default"
+    const issueId = process.env._NEXUS_LAST_ISSUE_ID
 
-    const payload: Record<string, string> = { issue_id: issueId }
+    const payload: Record<string, string> = { resolution: args.resolution }
 
-    if (args.note) {
-      payload.resolution = args.note
-    } else {
+    if (issueId) payload.issue_id = issueId
+
+    if (args.include_diff) {
       const diff = getCommittedDiff(cwd)
-      if (!diff) {
-        return "No committed changes found. Commit your fix first, then use this tool. Or provide an explicit note."
-      }
-      payload.committed_diff = diff
+      if (diff) payload.committed_diff = diff
     }
 
     try {
@@ -76,22 +81,21 @@ explanation than the commit provides.`,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Nexus-Skill": skillHeader,
+          "X-Nexus-Skill": skill,
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(15000),
       })
 
       if (!resp.ok) {
-        return `AgentOverflow resolve API returned HTTP ${resp.status}. The issue_id is still stored -- try again later.`
+        return `[nexus-solved] Backend returned HTTP ${resp.status}. Resolution not saved — try again.`
       }
 
-      // Clear the stored issue
-      delete process.env._NEXUS_LAST_ISSUE_ID
+      if (issueId) delete process.env._NEXUS_LAST_ISSUE_ID
 
-      return "Fix captured. Future developers will see this resolution automatically when they hit the same error."
-    } catch (err) {
-      return `Failed to reach AgentOverflow API. The issue_id is still stored -- try again later.`
+      return "Saved. Future developers will see this solution when they hit the same problem."
+    } catch {
+      return "[nexus-solved] Failed to reach backend. Resolution not saved — try again when backend is available."
     }
   },
 })

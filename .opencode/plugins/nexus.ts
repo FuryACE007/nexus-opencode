@@ -10,15 +10,13 @@
  * 2. Detect the active product skill from repo metadata; ask the user if ambiguous
  * 3. Stamp `X-Nexus-Skill` on every LLM request so the backend loads the right context
  * 4. Handle `/skill <name>` and `/nskills` commands (and plain skill name when prompted) to switch context mid-session
- * 5. Inject a brief Nexus coordination note on the first message so OpenCode's local
- *    orchestration layer knows the active skill and that AgentOverflow (/solve) exists
+ * 5. Inject skill context + AgentOverflow instructions into system prompt on every LLM call
  * 6. Propagate `_NEXUS_ACTIVE_SKILL` into all spawned shell processes via shell.env hook
- * 7. Auto-capture committed fixes in AgentOverflow (tool.execute.after on git commit)
  *
  * Coordination principle: OpenCode is the local orchestration engine (planning, tool use,
  * LSP, file editing). Nexus Core Engine is the remote brain (RAG, team context, LLM routing).
  * They enhance each other — the plugin ensures they share the same skill context and that
- * OpenCode's agent knows to delegate hard debugging problems to AgentOverflow.
+ * OpenCode's agent uses nexus-search + nexus-solve for product and debugging queries.
  */
 
 import type { Plugin, PluginInput, Hooks } from "@opencode-ai/plugin"
@@ -213,48 +211,6 @@ async function validateAndSwitchSkill(
   }
 }
 
-// ── AgentOverflow helpers ───────────────────────────────────────────────────
-
-function getCommittedDiff(directory: string): string | null {
-  try {
-    const diff = execSync("git show HEAD --no-color -p --stat", {
-      cwd: directory,
-      timeout: 10000,
-      encoding: "utf-8",
-      maxBuffer: 1024 * 1024,
-    }).trim()
-    if (!diff) return null
-    return diff.length > 8000
-      ? diff.slice(0, 8000) + "\n\n... (diff truncated for payload size)"
-      : diff
-  } catch {
-    return null
-  }
-}
-
-async function sendResolve(
-  issueId: string,
-  opts: { committedDiff?: string; resolution?: string },
-): Promise<boolean> {
-  const payload: Record<string, string> = { issue_id: issueId }
-  if (opts.committedDiff) payload.committed_diff = opts.committedDiff
-  if (opts.resolution) payload.resolution = opts.resolution
-
-  try {
-    const resp = await fetch(`${NEXUS_BASE_URL}/api/overflow/resolve`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Nexus-Skill": activeSkill,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000),
-    })
-    return resp.ok
-  } catch {
-    return false
-  }
-}
 
 // ── Plugin entry point ──────────────────────────────────────────────────────
 
@@ -417,52 +373,34 @@ export const server: Plugin = async (input: PluginInput) => {
         }
       }
 
-      // 4. Inject a Nexus coordination note on the first message of the session.
-      //    This keeps OpenCode's local orchestration layer in sync with Nexus:
-      //    - tells it which product skill is active
-      //    - tells it AgentOverflow is available via /solve for complex bugs
-      //    - if skill is ambiguous, asks it to prompt the user before proceeding
-      if (!nexusContextInjected && textParts[0]) {
+      // 4. If skill is ambiguous, inject selection prompt on first message only.
+      //    For confident skill, skill context is injected via system.transform hook
+      //    on every LLM call — no need to pollute the user message.
+      if (!nexusContextInjected && pendingSkillSelection && textParts[0]) {
         nexusContextInjected = true
-
-        if (pendingSkillSelection) {
-          const list = availableSkillNames.join(", ")
-          textParts[0].text =
-            `[Nexus: product skill could not be auto-detected for this repo. ` +
-            `Available skills: ${list}. Before answering, ask the user which skill ` +
-            `to activate. They can use /skill <name> to switch, or just reply with the skill name.]\n\n` +
-            textParts[0].text
-        } else {
-          textParts[0].text =
-            `[Nexus context: active skill="${activeSkill}". ` +
-            `When you encounter a bug or error you cannot resolve confidently, ` +
-            `use the /solve command to query the team knowledge base (AgentOverflow) ` +
-            `before attempting multiple speculative fix attempts.]\n\n` +
-            textParts[0].text
-        }
+        const list = availableSkillNames.join(", ")
+        textParts[0].text =
+          `[Nexus: product skill could not be auto-detected for this repo. ` +
+          `Available skills: ${list}. Before answering, ask the user which skill ` +
+          `to activate. They can use /skill <name> to switch, or just reply with the skill name.]\n\n` +
+          textParts[0].text
       }
     },
 
-    // ── Auto-resolve AgentOverflow on git commit ──────────────────────────
-    // When the developer commits after a /solve session, capture the committed
-    // diff and send it to /api/overflow/resolve. The backend summarizes the
-    // diff via LLM and upserts the resolution into the knowledge base.
-    // Failures are silent — never block the commit flow.
-    "tool.execute.after": async (input, _output) => {
-      if (input.tool !== "bash") return
-      const issueId = process.env._NEXUS_LAST_ISSUE_ID
-      if (!issueId) return
-
-      const args = typeof input.args === "string" ? input.args : JSON.stringify(input.args)
-      if (!args.includes("git commit")) return
-
-      const committedDiff = getCommittedDiff(directory)
-      if (!committedDiff) return
-
-      const ok = await sendResolve(issueId, { committedDiff })
-      if (ok) {
-        delete process.env._NEXUS_LAST_ISSUE_ID
-      }
+    // ── Inject Nexus skill context into system prompt on every LLM call ───
+    // Uses the dedicated system transform hook so instructions live in the
+    // system prompt (not the user message) and survive compaction boundaries.
+    "experimental.chat.system.transform": async (_input, output) => {
+      output.system.push(
+        `Active Nexus skill: "${activeSkill}".\n` +
+        `You have Nexus tools for team knowledge:\n` +
+        `- nexus-search: query the KB for product docs, architecture, APIs, conventions. Prefer over read/grep for product context.\n` +
+        `- nexus-solve: query AgentOverflow for known solutions to bugs/errors. Use proactively when you detect the user is stuck — do not wait for /solve.\n` +
+        `- nexus-solved: save a resolution to the team KB. Only call after user explicitly approves.\n\n` +
+        `Resolution flow: after helping resolve an issue, summarize the complete fix (problem, steps, root cause, solution) and present it to the user: ` +
+        `"Want to save this to the team KB? You can approve or edit first." ` +
+        `Wait for explicit approval before calling nexus-solved. Never auto-save.`,
+      )
     },
   }
 

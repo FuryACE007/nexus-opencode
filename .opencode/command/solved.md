@@ -1,10 +1,9 @@
 ---
-description: Confirm the last /solve issue is fixed and capture resolution in knowledge base
+description: Save a solution to the team knowledge base
 ---
 
-Use the nexus-solved tool to confirm the last issue is resolved.
+The user wants to save a resolution to AgentOverflow.
 
-If a note was provided, pass it as the `note` argument.
-Otherwise, call nexus-solved with no arguments — the tool will use the last git commit diff automatically.
+If $ARGUMENTS is provided, use it as the resolution text and call nexus-solved directly.
 
-$ARGUMENTS
+If no arguments: summarize the complete resolution from this conversation — original problem, all steps taken, root cause, and final fix — then present the summary to the user for review. Ask: "Does this look right? I'll save it once you confirm." Call nexus-solved only after they approve.

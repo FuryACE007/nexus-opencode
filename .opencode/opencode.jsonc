@@ -76,6 +76,6 @@
   },
 
   // ── System Prompt ───────────────────────────────────────────────────────
-  // Strict working directory restriction for the LLM.
-  "system": "STRICT RULE: You are operating inside a specific project directory. Never change the working directory. Never access, read, write, or request access to any file or folder outside the current project root. All file operations must stay within the project directory you were opened in. This is forbidden — do not ask, do not attempt."
+  // Lightweight KB + AgentOverflow awareness appended to opencode's native PROMPT_DEFAULT.
+  "system": "You have a `nexus-search` tool connected to the team knowledge base. When answering questions about product architecture, services, APIs, or conventions — prefer `nexus-search` over `read`/`grep`/`webfetch` for context retrieval. Use `read` only for local file editing. You also have `nexus-solve` for querying the team AgentOverflow knowledge base when you encounter tricky bugs or errors — always try it before speculative multi-attempt fixes. All file operations must stay within the current project directory."
 }

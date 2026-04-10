@@ -19,6 +19,8 @@ jobs:
   build:
     name: Build binaries
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +39,13 @@ jobs:
         run: bun run packages/opencode/script/build.ts
         env:
           OPENCODE_VERSION: ${{ inputs.version || github.ref_name }}
+
+      # Upload raw Windows CLI binary before bundling so the Electron job can use it as a sidecar
+      - name: Upload Windows CLI binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-windows-cli
+          path: packages/opencode/dist/nexus-windows-x64/bin/nexus.exe
 
       # Flatten Mac binaries; build Windows zip bundle with .opencode/ + setup script
       - name: Flatten binary structure
@@ -62,6 +71,7 @@ jobs:
           cp nexus-windows-x64/bin/nexus.exe nexus-windows-bundle/nexus.exe
           cp -r "$GITHUB_WORKSPACE/.opencode" nexus-windows-bundle/.opencode
           cp "$GITHUB_WORKSPACE/nexus/setup-windows.ps1" nexus-windows-bundle/setup.ps1
+          cp "$GITHUB_WORKSPACE/nexus/install.bat" nexus-windows-bundle/install.bat
           rm -rf nexus-windows-x64
 
           cd nexus-windows-bundle
@@ -82,7 +92,8 @@ jobs:
             echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
-      # Create the GitHub Release and attach all binaries
+      # Create the GitHub Release and attach CLI binaries.
+      # The Electron desktop installer is uploaded by the build-electron-windows job.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -112,7 +123,7 @@ jobs:
             nexus --version
             ```
 
-            ### Windows (PowerShell)
+            ### Windows — CLI (PowerShell)
             ```powershell
             # 1. Download and extract the zip
             $zip = "$env:TEMP\nexus-windows.zip"
@@ -124,9 +135,67 @@ jobs:
             # 2. Run the setup script (installs config + binary + PATH)
             powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\nexus-setup\setup.ps1"
 
-            # rare scenario( step 2 )
+            # rare scenario (step 2)
             Get-Content "$env:TEMP\nexus-setup\setup.ps1" | powershell.exe -noprofile -
 
             # 3. Open a new terminal, then:
             nexus --version
             ```
+
+            ### Windows — Desktop App
+            Download `nexus-desktop-win-x64.exe` from the assets below and run it.
+            Requires the CLI to be installed first (see Windows CLI instructions above).
+
+  build-electron-windows:
+    name: Build Electron Windows installer
+    needs: build
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # Download the raw nexus.exe built by the build job and place it as the
+      # electron sidecar. electron-builder packages it into the installer as
+      # resources/opencode-cli.exe which the desktop app launches at runtime.
+      - name: Download Windows CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nexus-windows-cli
+          path: packages/desktop-electron/resources
+
+      - name: Rename CLI binary to sidecar name
+        shell: pwsh
+        run: Rename-Item "packages\desktop-electron\resources\nexus.exe" "opencode-cli.exe"
+
+      # electron-vite build — prebuild hook copies prod icons automatically
+      - name: Build Electron app
+        working-directory: packages/desktop-electron
+        env:
+          OPENCODE_CHANNEL: prod
+        run: bun run build
+
+      # Package NSIS installer — skip auto-publish, we upload manually below
+      - name: Package Windows installer
+        working-directory: packages/desktop-electron
+        env:
+          OPENCODE_CHANNEL: prod
+        run: bunx electron-builder --win --config electron-builder.config.ts --publish never
+
+      # Rename to nexus-branded artifact before uploading
+      - name: Rename installer
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem "packages\desktop-electron\dist\opencode-electron-win-*.exe" | Select-Object -First 1
+          Rename-Item $src.FullName "nexus-desktop-win-x64.exe"
+
+      - name: Upload desktop installer to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ needs.build.outputs.tag }} packages/desktop-electron/dist/nexus-desktop-win-x64.exe --clobber
