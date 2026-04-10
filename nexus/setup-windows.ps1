@@ -82,43 +82,17 @@ Write-Step "Checking plugin dependencies..."
 $pluginDir = Join-Path $dest "node_modules\@opencode-ai\plugin"
 
 if (Test-Path $pluginDir -PathType Container) {
-    Write-Ok "@opencode-ai/plugin already present (pre-installed in bundle)."
+    Write-Ok "@opencode-ai/plugin present (pre-installed in bundle)."
 } else {
-    Write-Warn "node_modules not found — attempting install..."
+    # The plugin ships pre-installed in the release bundle and cannot be installed
+    # from npm (it is a private workspace package). A missing node_modules means
+    # the zip was extracted incompletely or is from a corrupted download.
+    Write-Error @"
+Plugin dependencies are missing from the bundle.
 
-    # Find a package manager
-    $pm = $null
-    if (Get-Command bun  -ErrorAction SilentlyContinue) { $pm = "bun" }
-    elseif (Get-Command npm -ErrorAction SilentlyContinue) { $pm = "npm" }
-
-    if (-not $pm) {
-        Write-Error @"
-Plugin dependencies are missing and no package manager (npm or bun) was found.
-
-Install Node.js from https://nodejs.org (includes npm), then re-run this script.
-Alternatively, install Bun from https://bun.sh
+This usually means the zip was extracted incompletely or downloaded incorrectly.
+Re-download nexus-windows-x64.zip from the release page and try again.
 "@
-    }
-
-    $orig = $PWD
-    Set-Location $dest
-    try {
-        if ($pm -eq "bun") {
-            & bun install --no-save 2>&1
-        } else {
-            & npm install --no-fund --no-audit 2>&1
-        }
-    } catch {
-        Set-Location $orig
-        Write-Error "Plugin install failed: $_`nEnsure $pm is working correctly, then re-run this script."
-    }
-    Set-Location $orig
-
-    if (-not (Test-Path $pluginDir -PathType Container)) {
-        Write-Error "@opencode-ai/plugin was not installed. Check $pm output above and retry."
-    }
-
-    Write-Ok "@opencode-ai/plugin installed via $pm."
 }
 
 # -- 4. install nexus.exe --
